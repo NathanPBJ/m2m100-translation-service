@@ -47,3 +47,27 @@ class TranslationInferenceError(TranslationServiceError):
 
 class DeviceConfigurationError(TranslationServiceError):
     """Raised when the requested compute device cannot be used."""
+
+
+class LanguageDetectionError(Exception):
+    """Base exception for language detection errors."""
+
+
+class LanguageDetectorLoadError(LanguageDetectionError):
+    """Raised when the Lingua detector cannot be built."""
+
+
+class LanguageDetectorNotLoadedError(LanguageDetectionError):
+    """Raised when detection is requested before the detector is loaded."""
+
+
+class InvalidLanguageDetectionInputError(LanguageDetectionError):
+    """Raised when text has insufficient detectable language content."""
+
+
+class LanguageDetectionUncertainError(LanguageDetectionError):
+    """Raised when no language meets the configured confidence thresholds."""
+
+
+class LanguageDetectionInferenceError(LanguageDetectionError):
+    """Raised when Lingua fails unexpectedly while detecting a language."""

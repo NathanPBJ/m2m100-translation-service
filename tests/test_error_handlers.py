@@ -8,14 +8,19 @@ from app.core.exceptions import (
     DeviceConfigurationError,
     InputTextTooLargeError,
     InputTooLongError,
+    InvalidLanguageDetectionInputError,
     InvalidTranslationInputError,
+    LanguageDetectionInferenceError,
+    LanguageDetectionUncertainError,
+    LanguageDetectorLoadError,
+    LanguageDetectorNotLoadedError,
     ModelLoadError,
     ModelNotLoadedError,
     TranslationInferenceError,
     UnsupportedLanguageError,
 )
 from app.main import create_app
-from tests.conftest import FakeTranslationService
+from tests.conftest import FakeLanguageDetectionService, FakeTranslationService
 
 
 @pytest.mark.parametrize(
@@ -57,6 +62,31 @@ from tests.conftest import FakeTranslationService
             "device_configuration_error",
         ),
         (
+            InvalidLanguageDetectionInputError("raw invalid detection input"),
+            422,
+            "invalid_detection_input",
+        ),
+        (
+            LanguageDetectionUncertainError("raw uncertain result"),
+            422,
+            "language_detection_uncertain",
+        ),
+        (
+            LanguageDetectorNotLoadedError("raw detector state"),
+            503,
+            "language_detector_not_loaded",
+        ),
+        (
+            LanguageDetectorLoadError("raw Rust load failure TOP_SECRET"),
+            503,
+            "language_detector_load_failed",
+        ),
+        (
+            LanguageDetectionInferenceError("raw Rust inference TOP_SECRET"),
+            500,
+            "language_detection_failed",
+        ),
+        (
             TranslationInferenceError("raw PyTorch TOP_SECRET failure"),
             500,
             "translation_failed",
@@ -75,8 +105,10 @@ def test_exception_mapping_has_consistent_safe_envelope(
     error_code: str,
 ) -> None:
     service = FakeTranslationService()
+    detection_service = FakeLanguageDetectionService()
     application = create_app(
         translation_service=service,  # type: ignore[arg-type]
+        language_detection_service=detection_service,  # type: ignore[arg-type]
         settings=api_settings,
     )
 

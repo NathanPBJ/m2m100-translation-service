@@ -12,7 +12,12 @@ from app.core.exceptions import (
     DeviceConfigurationError,
     InputTextTooLargeError,
     InputTooLongError,
+    InvalidLanguageDetectionInputError,
     InvalidTranslationInputError,
+    LanguageDetectionInferenceError,
+    LanguageDetectionUncertainError,
+    LanguageDetectorLoadError,
+    LanguageDetectorNotLoadedError,
     ModelLoadError,
     ModelNotLoadedError,
     TranslationInferenceError,
@@ -133,6 +138,69 @@ async def device_configuration_error_handler(
     return _error_response(503, "device_configuration_error", str(exc))
 
 
+async def invalid_detection_input_handler(
+    _: Request,
+    _exc: InvalidLanguageDetectionInputError,
+) -> JSONResponse:
+    return _error_response(
+        422,
+        "invalid_detection_input",
+        "The text does not contain enough detectable language content.",
+    )
+
+
+async def language_detection_uncertain_handler(
+    _: Request,
+    _exc: LanguageDetectionUncertainError,
+) -> JSONResponse:
+    return _error_response(
+        422,
+        "language_detection_uncertain",
+        "The source language could not be detected reliably.",
+    )
+
+
+async def language_detector_not_loaded_handler(
+    _: Request,
+    _exc: LanguageDetectorNotLoadedError,
+) -> JSONResponse:
+    return _error_response(
+        503,
+        "language_detector_not_loaded",
+        "The language detector is not currently loaded.",
+    )
+
+
+async def language_detector_load_error_handler(
+    _: Request,
+    exc: LanguageDetectorLoadError,
+) -> JSONResponse:
+    logger.error(
+        "Language detector loading failed",
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    return _error_response(
+        503,
+        "language_detector_load_failed",
+        "The language detector could not be loaded.",
+    )
+
+
+async def language_detection_inference_error_handler(
+    _: Request,
+    exc: LanguageDetectionInferenceError,
+) -> JSONResponse:
+    logger.error(
+        "Language detection request failed",
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    return _error_response(
+        500,
+        "language_detection_failed",
+        "Language detection could not be completed.",
+    )
+
+
 async def translation_inference_error_handler(
     _: Request,
     exc: TranslationInferenceError,
@@ -171,6 +239,11 @@ def register_error_handlers(app: FastAPI) -> None:
         ModelNotLoadedError: model_not_loaded_handler,
         ModelLoadError: model_load_error_handler,
         DeviceConfigurationError: device_configuration_error_handler,
+        InvalidLanguageDetectionInputError: invalid_detection_input_handler,
+        LanguageDetectionUncertainError: language_detection_uncertain_handler,
+        LanguageDetectorNotLoadedError: language_detector_not_loaded_handler,
+        LanguageDetectorLoadError: language_detector_load_error_handler,
+        LanguageDetectionInferenceError: language_detection_inference_error_handler,
         TranslationInferenceError: translation_inference_error_handler,
         Exception: unexpected_error_handler,
     }

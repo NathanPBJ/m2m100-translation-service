@@ -6,18 +6,17 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class TranslationRequest(BaseModel):
-    """Text and explicit language pair supplied by an API client."""
+    """Text and an automatic or manually supplied source language."""
 
     text: str
-    source_language: str
+    source_language: str = "auto"
     target_language: str
 
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [
                 {
-                    "text": "Good morning",
-                    "source_language": "en",
+                    "text": "Сегодня хорошая погода",
                     "target_language": "id",
                 }
             ]
@@ -32,18 +31,22 @@ class TranslationRequest(BaseModel):
             raise ValueError("Text must not be empty or contain only whitespace.")
         return value
 
-    @field_validator("source_language", "target_language")
+    @field_validator("source_language")
     @classmethod
-    def normalize_language_code(cls, value: str) -> str:
-        """Trim and lowercase language codes while rejecting empty values."""
+    def normalize_source_language(cls, value: str) -> str:
         normalized_value = value.strip().lower()
         if not normalized_value:
-            raise ValueError("Language code must not be empty.")
+            raise ValueError("Source language code must not be empty.")
+        return normalized_value
+
+    @field_validator("target_language")
+    @classmethod
+    def normalize_target_language(cls, value: str) -> str:
+        normalized_value = value.strip().lower()
+        if not normalized_value:
+            raise ValueError("Target language code must not be empty.")
         if normalized_value == "auto":
-            raise ValueError(
-                "Language code 'auto' is not supported because automatic detection "
-                "is not implemented."
-            )
+            raise ValueError("Target language code cannot be 'auto'.")
         return normalized_value
 
 
@@ -53,6 +56,10 @@ class TranslationResponse(BaseModel):
     original_text: str
     translated_text: str
     source_language: str
+    source_language_mode: Literal["auto", "manual"]
+    detected_language: str | None
+    detection_confidence: float | None
+    detection_confidence_margin: float | None
     target_language: str
     model_name: str
     device: str
@@ -63,9 +70,13 @@ class TranslationResponse(BaseModel):
         json_schema_extra={
             "examples": [
                 {
-                    "original_text": "Good morning",
-                    "translated_text": "Selamat pagi",
-                    "source_language": "en",
+                    "original_text": "Сегодня хорошая погода",
+                    "translated_text": "Cuacanya bagus hari ini",
+                    "source_language": "ru",
+                    "source_language_mode": "auto",
+                    "detected_language": "ru",
+                    "detection_confidence": 0.99,
+                    "detection_confidence_margin": 0.98,
                     "target_language": "id",
                     "model_name": "facebook/m2m100_418M",
                     "device": "cpu",
@@ -82,6 +93,9 @@ class SupportedLanguagesResponse(BaseModel):
     model_name: str
     count: int
     languages: list[str]
+    language_detector: str
+    auto_detectable_count: int
+    auto_detectable_languages: list[str]
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -90,6 +104,9 @@ class SupportedLanguagesResponse(BaseModel):
                     "model_name": "facebook/m2m100_418M",
                     "count": 5,
                     "languages": ["en", "id", "ja", "ru", "zh"],
+                    "language_detector": "lingua",
+                    "auto_detectable_count": 5,
+                    "auto_detectable_languages": ["en", "id", "ja", "ru", "zh"],
                 }
             ]
         }

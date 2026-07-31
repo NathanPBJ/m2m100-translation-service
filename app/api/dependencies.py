@@ -6,7 +6,8 @@ from typing import cast
 from fastapi import Request
 
 from app.core.config import Settings
-from app.core.exceptions import ModelNotLoadedError
+from app.core.exceptions import LanguageDetectorNotLoadedError, ModelNotLoadedError
+from app.services.language_detection import LinguaLanguageDetectionService
 from app.services.translation import M2M100TranslationService
 
 
@@ -24,6 +25,16 @@ def get_translation_semaphore(request: Request) -> asyncio.Semaphore:
     if semaphore is None:
         raise ModelNotLoadedError("Translation concurrency control is not available.")
     return cast(asyncio.Semaphore, semaphore)
+
+
+def get_language_detection_service(
+    request: Request,
+) -> LinguaLanguageDetectionService:
+    """Return the loaded detector stored by the application lifespan."""
+    service = getattr(request.app.state, "language_detection_service", None)
+    if service is None or not service.is_loaded:
+        raise LanguageDetectorNotLoadedError("The language detector is not currently loaded.")
+    return cast(LinguaLanguageDetectionService, service)
 
 
 def get_app_settings(request: Request) -> Settings:

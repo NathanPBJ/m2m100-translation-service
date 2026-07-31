@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import PositiveInt
+from pydantic import Field, PositiveInt
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     model_num_beams: PositiveInt = 4
     api_max_text_characters: PositiveInt = 10_000
     translation_max_concurrency: PositiveInt = 1
+    language_detection_min_confidence: float = Field(default=0.30, ge=0.0, le=1.0)
+    language_detection_min_relative_distance: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=0.99,
+    )
+    language_detection_min_alphabetic_characters: PositiveInt = 3
+    language_detection_max_candidates: PositiveInt = 3
 
     model_config = SettingsConfigDict(
         env_file=".env",

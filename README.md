@@ -1,11 +1,11 @@
 # M2M100 Translation Service
 
-API penerjemahan multibahasa lokal yang dibangun dengan FastAPI, PyTorch, dan
-model `facebook/m2m100_418M`. Model berjalan pada komputer sendiri dan tidak
-memanggil hosted translation API.
+API penerjemahan multibahasa lokal menggunakan FastAPI, PyTorch,
+`facebook/m2m100_418M`, dan Lingua. Model translation dan language detector
+berjalan pada komputer sendiri tanpa hosted inference, detection API, atau
+translation API berbayar.
 
-Source language dan target language masih harus diberikan secara manual.
-Automatic language detection belum tersedia.
+Source language dapat diberikan secara manual atau dideteksi otomatis.
 
 ## Technology stack
 
@@ -14,15 +14,9 @@ Automatic language detection belum tersedia.
 - PyTorch
 - Hugging Face Transformers
 - SentencePiece
+- `lingua-language-detector`
 - Pydantic Settings
-- Pytest dan HTTPX
-- Ruff
-
-## Prasyarat
-
-- Python 3.10, 3.11, atau 3.12
-- Git
-- Ruang penyimpanan dan RAM yang cukup untuk M2M100 418M
+- Pytest, HTTPX, dan Ruff
 
 ## Menyiapkan project
 
@@ -50,7 +44,7 @@ Install dependency:
 python -m pip install -r requirements.txt
 ```
 
-Buat konfigurasi lokal pada Windows PowerShell:
+Buat konfigurasi lokal pada Windows:
 
 ```powershell
 Copy-Item .env.example .env
@@ -62,8 +56,8 @@ Pada macOS atau Linux:
 cp .env.example .env
 ```
 
-Semua konfigurasi mempunyai nilai default, sehingga file `.env` tidak wajib.
-File tersebut diabaikan Git.
+Semua konfigurasi mempunyai nilai default. File `.env` bersifat opsional dan
+diabaikan Git.
 
 ## Menjalankan service
 
@@ -74,7 +68,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 `--reload` hanya untuk development dan dapat menyebabkan model dimuat ulang
-ketika source code berubah.
+ketika source berubah.
 
 Menjalankan service tanpa file watcher:
 
@@ -82,33 +76,86 @@ Menjalankan service tanpa file watcher:
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Dokumentasi API tersedia di:
-
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - ReDoc: `http://127.0.0.1:8000/redoc`
 
-## Model startup
+## Model dan detector startup
 
-FastAPI memuat tokenizer dan model sekali selama application startup. Loading
-dijalankan melalui threadpool agar tidak memblokir event loop. API belum siap
-menerima request sampai loading berhasil.
+FastAPI memuat tokenizer serta model M2M100 sekali saat startup. Setelah model
+siap, aplikasi mengambil daftar bahasa tokenizer dan membangun satu Lingua
+detector dari intersection bahasa Lingua dan M2M100. API belum menerima request
+sampai keduanya berhasil dimuat.
 
-Startup pertama dapat membutuhkan waktu lebih lama karena file model harus
-diunduh. Startup berikutnya menggunakan cache lokal. Model tidak dimuat ulang
-untuk setiap request, dan referensi model dilepaskan saat application shutdown.
+Loading dilakukan melalui threadpool. Model dan detector tidak dibuat ulang per
+request. Detector dilepas lebih dulu saat shutdown, kemudian referensi model
+dibersihkan.
+
+Startup pertama dapat lebih lama karena file M2M100 perlu diunduh. Lingua tidak
+melakukan download model tambahan dan dapat berjalan offline setelah package
+terpasang.
 
 ## API endpoints
 
 | Method | Path | Keterangan |
 |---|---|---|
 | GET | `/` | Informasi dasar service |
-| GET | `/health` | Status aplikasi dan model |
-| GET | `/languages` | Kode bahasa dari tokenizer yang sedang dimuat |
-| POST | `/translate` | Menerjemahkan satu teks |
+| GET | `/health` | Status model dan detector |
+| GET | `/languages` | Bahasa translation dan auto-detection |
+| POST | `/detect-language` | Deteksi satu bahasa dominan |
+| POST | `/translate` | Translation manual atau otomatis |
 | GET | `/docs` | Swagger UI |
 | GET | `/redoc` | ReDoc |
 
-### Translate request
+## Automatic language detection
+
+Automatic detection menggunakan `lingua-language-detector==2.2.0` secara lokal.
+Jika `source_language` tidak dikirim, nilainya otomatis menjadi `auto`.
+`source_language="auto"` juga dapat diberikan secara eksplisit.
+
+Detector hanya mempertimbangkan bahasa yang dapat dipetakan ke kode tokenizer
+M2M100. M2M100 saat ini menyediakan 100 kode translation, sedangkan intersection
+aktual dengan Lingua menghasilkan 66 kode auto-detectable.
+
+Lingua membedakan Norwegian Bokmål (`nb`) dan Nynorsk (`nn`), sedangkan
+tokenizer M2M100 menyediakan kode `no`. Kedua kode Lingua tersebut dipetakan ke
+`no`; candidate API tetap diduplikasi menjadi satu kode dengan confidence
+tertinggi.
+
+### Auto translate example
+
+Request:
+
+```json
+{
+  "text": "Сегодня хорошая погода",
+  "target_language": "id"
+}
+```
+
+Contoh response dari model lokal:
+
+```json
+{
+  "original_text": "Сегодня хорошая погода",
+  "translated_text": "Cuaca yang baik hari ini",
+  "source_language": "ru",
+  "source_language_mode": "auto",
+  "detected_language": "ru",
+  "detection_confidence": 0.8865,
+  "detection_confidence_margin": 0.8331,
+  "target_language": "id",
+  "model_name": "facebook/m2m100_418M",
+  "device": "cpu",
+  "status": "translated"
+}
+```
+
+Detection hanya menentukan source language. Confidence bukan ukuran kualitas
+translation.
+
+### Manual translate example
+
+Request lama tetap didukung:
 
 ```json
 {
@@ -118,43 +165,91 @@ untuk setiap request, dan referensi model dilepaskan saat application shutdown.
 }
 ```
 
-`source_language` wajib diberikan. Nilai `auto` belum didukung. Daftar kode
-bahasa yang valid dapat diperoleh melalui `GET /languages`.
+Response manual mempunyai `source_language_mode="manual"`, sedangkan
+`detected_language`, `detection_confidence`, dan
+`detection_confidence_margin` bernilai `null`.
 
-### Translate response
+Target language selalu wajib dan tidak boleh menggunakan `auto`.
 
-```json
-{
-  "original_text": "Good morning",
-  "translated_text": "Selamat pagi",
-  "source_language": "en",
-  "target_language": "id",
-  "model_name": "facebook/m2m100_418M",
-  "device": "cpu",
-  "status": "translated"
-}
-```
+## Detect-language endpoint
 
-Jika source dan target sama, model tidak menjalankan inference. Teks asli
-dikembalikan dengan status `unchanged`.
-
-### Supported languages
-
-`GET /languages` mengembalikan kode bahasa yang benar-benar tersedia pada
-tokenizer:
+Request:
 
 ```json
 {
-  "model_name": "facebook/m2m100_418M",
-  "count": 100,
-  "languages": ["af", "ar", "en", "id", "ja"]
+  "text": "Сегодня хорошая погода"
 }
 ```
 
-Nilai `count` dan daftar di atas hanya contoh format. Response aktual selalu
-dibuat dari tokenizer, diurutkan, dan tidak diduplikasi.
+Response:
 
-### Health response
+```json
+{
+  "language": "ru",
+  "confidence": 0.8865,
+  "confidence_margin": 0.8331,
+  "detector": "lingua",
+  "status": "detected",
+  "candidates": [
+    {
+      "language": "ru",
+      "confidence": 0.8865
+    },
+    {
+      "language": "uk",
+      "confidence": 0.0535
+    },
+    {
+      "language": "be",
+      "confidence": 0.043
+    }
+  ]
+}
+```
+
+Endpoint tidak mengembalikan atau menyimpan original text.
+
+## Confidence dan margin
+
+Confidence adalah nilai keyakinan Lingua terhadap kandidat teratas.
+`confidence_margin` adalah selisih confidence kandidat pertama dan kedua. Jika
+hanya satu candidate tersedia, margin sama dengan confidence kandidat tersebut.
+
+Detection diterima hanya jika:
+
+- Confidence mencapai `LANGUAGE_DETECTION_MIN_CONFIDENCE`.
+- Margin mencapai `LANGUAGE_DETECTION_MIN_RELATIVE_DISTANCE`.
+
+Jika tidak, API mengembalikan `language_detection_uncertain` dan tidak
+menjalankan translation.
+
+## Detection cleaning
+
+Salinan teks khusus detection dibersihkan secara ringan:
+
+- URL `http://`, `https://`, dan `www.` dihapus.
+- Mention seperti `@username` dihapus.
+- Simbol `#` dihapus tetapi isi hashtag dipertahankan.
+- Whitespace dinormalisasi.
+- Karakter alfabet dihitung menggunakan dukungan Unicode Python.
+
+Original text tidak diubah. M2M100 menerima string asli, termasuk whitespace,
+emoji, mention, hashtag, dan URL.
+
+## Supported languages
+
+`GET /languages` membedakan:
+
+- `languages`: seluruh kode yang dapat diterjemahkan tokenizer M2M100.
+- `auto_detectable_languages`: subset yang dapat dideteksi Lingua dan
+  diterjemahkan M2M100.
+
+Bahasa M2M100 di luar intersection tetap dapat digunakan dengan source language
+manual.
+
+## Health response
+
+`GET /health` mencakup:
 
 ```json
 {
@@ -164,46 +259,48 @@ dibuat dari tokenizer, diurutkan, dan tidak diduplikasi.
   "environment": "development",
   "model_loaded": true,
   "model_name": "facebook/m2m100_418M",
-  "model_device": "cpu"
+  "model_device": "cpu",
+  "language_detector_loaded": true,
+  "language_detector_name": "lingua",
+  "auto_detectable_language_count": 66
 }
 ```
 
-Health check tidak menjalankan inference.
+Health check tidak menjalankan detection atau translation.
 
-### Error responses
+## Error responses
 
-Semua error API memakai envelope yang sama:
+Semua error memakai envelope:
 
 ```json
 {
   "error": {
-    "code": "unsupported_language",
-    "message": "Source language code 'xx' is not supported."
+    "code": "language_detection_uncertain",
+    "message": "The source language could not be detected reliably."
   }
 }
 ```
 
-Mapping status utama:
+Mapping utama:
 
 | Status | Error code |
 |---|---|
 | 413 | `text_too_large`, `input_too_long` |
-| 422 | `request_validation_error`, `invalid_translation_input`, `unsupported_language` |
-| 500 | `translation_failed`, `internal_server_error` |
-| 503 | `model_not_loaded`, `model_load_failed`, `device_configuration_error` |
+| 422 | `request_validation_error`, `invalid_detection_input`, `language_detection_uncertain`, `unsupported_language` |
+| 500 | `language_detection_failed`, `translation_failed`, `internal_server_error` |
+| 503 | `language_detector_not_loaded`, `language_detector_load_failed`, `model_not_loaded`, `model_load_failed`, `device_configuration_error` |
 
-Response internal error tidak menyertakan traceback, path lokal, isi teks, atau
-pesan mentah PyTorch/Transformers.
+Response internal error tidak menyertakan traceback, path lokal, original text,
+cleaned text, atau pesan mentah dari Lingua/PyTorch.
 
 ## Concurrency
 
-Inference PyTorch yang blocking dijalankan di threadpool. Sebuah
-`asyncio.Semaphore` membatasi inference bersamaan dalam satu process FastAPI
-berdasarkan `TRANSLATION_MAX_CONCURRENCY`. Default-nya satu agar sesuai untuk
-CPU. Mekanisme ini bukan rate limiter global.
+Language detection dan M2M100 inference yang synchronous dijalankan melalui
+threadpool. Detection berjalan sebelum translation semaphore.
 
-Jangan menjalankan beberapa Uvicorn worker tanpa memperhitungkan bahwa setiap
-process akan memuat satu copy model sendiri.
+`TRANSLATION_MAX_CONCURRENCY` membatasi M2M100 inference bersamaan dalam satu
+process FastAPI. Default-nya satu untuk CPU. Ini bukan rate limiter global.
+Setiap process Uvicorn akan memuat satu copy model sendiri.
 
 ## Configuration
 
@@ -211,42 +308,46 @@ process akan memuat satu copy model sendiri.
 |---|---|---|
 | `APP_NAME` | `M2M100 Translation Service` | Nama aplikasi |
 | `APP_VERSION` | `0.1.0` | Versi API |
-| `APP_ENV` | `development` | Nama environment |
+| `APP_ENV` | `development` | Environment |
 | `APP_HOST` | `0.0.0.0` | Host Uvicorn |
 | `APP_PORT` | `8000` | Port Uvicorn |
 | `LOG_LEVEL` | `INFO` | Level logging |
-| `MODEL_NAME` | `facebook/m2m100_418M` | Checkpoint Hugging Face |
+| `MODEL_NAME` | `facebook/m2m100_418M` | Checkpoint model |
 | `MODEL_CACHE_DIR` | `./models` | Cache tokenizer dan bobot |
 | `MODEL_DEVICE` | `auto` | `auto`, `cpu`, atau `cuda` |
-| `MODEL_LOCAL_FILES_ONLY` | `false` | Gunakan cache lokal saja jika `true` |
-| `MODEL_MAX_INPUT_TOKENS` | `512` | Batas token input engine |
-| `MODEL_MAX_NEW_TOKENS` | `256` | Batas token hasil generation |
-| `MODEL_NUM_BEAMS` | `4` | Jumlah beam generation |
-| `API_MAX_TEXT_CHARACTERS` | `10000` | Batas karakter sebelum tokenisasi |
-| `TRANSLATION_MAX_CONCURRENCY` | `1` | Batas inference bersamaan per process |
+| `MODEL_LOCAL_FILES_ONLY` | `false` | Gunakan cache lokal saja |
+| `MODEL_MAX_INPUT_TOKENS` | `512` | Batas token engine |
+| `MODEL_MAX_NEW_TOKENS` | `256` | Batas generation |
+| `MODEL_NUM_BEAMS` | `4` | Jumlah beam |
+| `API_MAX_TEXT_CHARACTERS` | `10000` | Batas karakter sebelum detection/tokenisasi |
+| `TRANSLATION_MAX_CONCURRENCY` | `1` | Inference bersamaan per process |
+| `LANGUAGE_DETECTION_MIN_CONFIDENCE` | `0.30` | Confidence minimum kandidat teratas |
+| `LANGUAGE_DETECTION_MIN_RELATIVE_DISTANCE` | `0.05` | Margin minimum kandidat pertama dan kedua |
+| `LANGUAGE_DETECTION_MIN_ALPHABETIC_CHARACTERS` | `3` | Minimum karakter alfabet setelah cleaning |
+| `LANGUAGE_DETECTION_MAX_CANDIDATES` | `3` | Candidate maksimum dalam response |
 
-`MODEL_DEVICE=auto` memilih CUDA hanya jika PyTorch menyatakan CUDA tersedia.
-Nilai `cuda` gagal secara eksplisit jika CUDA tidak tersedia.
+Character limit melindungi API sebelum detection. Token limit melindungi model
+setelah tokenisasi. Input tidak dipotong secara diam-diam.
 
-Character limit melindungi API sebelum tokenisasi. Token limit merupakan
-perlindungan terpisah setelah tokenizer menghitung panjang sequence. Input tidak
-dipotong secara diam-diam.
+## Smoke test
 
-## Menjalankan engine smoke test
-
-Engine juga dapat digunakan tanpa FastAPI. Script berikut memuat model asli dan
-menerjemahkan satu teks.
-
-Windows PowerShell:
+Deteksi offline:
 
 ```powershell
-python scripts/smoke_test_model.py `
-  --text "Good morning" `
-  --source en `
-  --target id
+python scripts/smoke_test_detection.py `
+  --text "Сегодня хорошая погода" `
+  --show-candidates
 ```
 
 Bash:
+
+```bash
+python scripts/smoke_test_detection.py \
+  --text "Сегодня хорошая погода" \
+  --show-candidates
+```
+
+Smoke test model langsung:
 
 ```bash
 python scripts/smoke_test_model.py \
@@ -255,10 +356,10 @@ python scripts/smoke_test_model.py \
   --target id
 ```
 
-## Testing dan pemeriksaan kualitas
+## Testing
 
-Unit dan integration test menggunakan fake tokenizer, fake model, dan fake
-translation service. Test biasa tidak mengunduh model:
+Unit dan integration test menggunakan fake tokenizer, model, dan detector.
+Menjalankan test biasa tidak mengunduh M2M100 atau melakukan network request:
 
 ```bash
 pytest
@@ -266,77 +367,56 @@ ruff check .
 ruff format --check .
 ```
 
-## Struktur project
+## Model dan cache files
 
-```text
-app/
-├── api/
-│   ├── dependencies.py
-│   ├── error_handlers.py
-│   └── routes/
-│       ├── health.py
-│       └── translation.py
-├── core/
-│   ├── config.py
-│   └── exceptions.py
-├── domain/translation.py
-├── schemas/
-│   ├── error.py
-│   ├── health.py
-│   └── translation.py
-├── services/translation.py
-└── main.py
-tests/
-├── conftest.py
-├── test_error_handlers.py
-├── test_health.py
-├── test_translation_api.py
-└── test_translation_service.py
-```
-
-## Model files
-
-Bobot model diunduh terpisah dan bukan bagian dari repository. Folder
-`models/`, `cache/`, dan `huggingface_cache/` diabaikan Git, bersama `.env`,
-`.venv`, log, dan cache tooling.
+Bobot M2M100 bukan bagian repository. Folder `models/`, `cache/`,
+`huggingface_cache/`, `.venv`, cache tooling, log, dan `.env` diabaikan Git.
+Binary wheel Lingua juga tidak disimpan dalam repository.
 
 ## Current limitations
 
-- Source language harus diberikan manual
-- `source_language="auto"` belum didukung
-- Belum ada batch translation
-- Belum ada authentication
-- Belum ada rate limiting
-- Belum ada Docker
-- Inference CPU dapat lambat
-- Satu FastAPI process memuat satu copy model
-- Input dibatasi oleh character limit dan token limit
+- Teks sangat pendek dapat ambigu.
+- Indonesian dan Malay sulit dibedakan pada beberapa kalimat pendek.
+- Sebagai contoh aktual, “Selamat pagi” dapat terdeteksi sebagai `ms`.
+- Mixed-language post menggunakan satu bahasa dominan.
+- Belum ada segment-level mixed-language translation.
+- Emoji-only, URL-only, atau mention-only tidak dapat dideteksi.
+- Auto detection hanya mencakup intersection Lingua dan M2M100.
+- Bahasa di luar intersection harus menggunakan source manual.
+- Detection confidence bukan translation confidence.
+- Belum ada batch translation.
+- Belum ada Docker.
+- Belum ada authentication atau rate limiting.
+- CPU inference dapat lambat.
 
 ## Status pengembangan
 
 Selesai:
 
 - FastAPI foundation
-- M2M100 engine
-- Model lifecycle
-- Endpoint `/translate`
-- Endpoint `/languages`
-- Consistent error responses
-- CPU/CUDA selection
+- M2M100 engine dan lifecycle
+- Manual translation
+- Automatic language detection
+- Endpoint `/detect-language`
+- Auto `/translate`
+- Consistent error handling
 - Unit dan integration tests
 
 Belum selesai:
 
-- Automatic language detection
+- Mixed-language segmentation
 - Batch translation
 - Docker
 - Authentication
+- Rate limiting
 - Performance benchmark
 - Production deployment configuration
 
 ## Lisensi
 
-Source code repository menggunakan MIT License. Bobot model
-`facebook/m2m100_418M` diunduh terpisah dari Hugging Face dan bukan bagian dari
-repository. Pengguna deployment harus memeriksa serta mematuhi lisensi dan
-ketentuan model upstream.
+Source code repository menggunakan MIT License. Bobot
+`facebook/m2m100_418M` diunduh terpisah dan bukan bagian repository.
+
+`lingua-language-detector` dilisensikan Apache-2.0 menurut metadata package.
+Pengguna deployment harus memeriksa dan mematuhi lisensi serta ketentuan semua
+dependency dan model upstream.

@@ -13,3 +13,6 @@ class HealthResponse(BaseModel):
     model_loaded: bool
     model_name: str
     model_device: str
+    language_detector_loaded: bool
+    language_detector_name: str
+    auto_detectable_language_count: int

@@ -1,4 +1,4 @@
-"""Tests for application lifespan and existing service endpoints."""
+"""Tests for application lifespan, health, and existing endpoints."""
 
 import asyncio
 
@@ -6,50 +6,62 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
-from app.core.exceptions import ModelLoadError
+from app.core.exceptions import LanguageDetectorLoadError, ModelLoadError
 from app.main import app as module_app
 from app.main import create_app
-from tests.conftest import FakeTranslationService
+from tests.conftest import FakeLanguageDetectionService, FakeTranslationService
 
 
-def test_importing_module_application_does_not_load_model() -> None:
+def test_importing_module_application_loads_neither_service() -> None:
     assert not hasattr(module_app.state, "translation_service")
+    assert not hasattr(module_app.state, "language_detection_service")
 
 
-def test_lifespan_loads_once_stores_state_and_unloads() -> None:
-    service = FakeTranslationService()
+def test_lifespan_loads_in_order_stores_state_and_unloads() -> None:
+    translation_service = FakeTranslationService()
+    detection_service = FakeLanguageDetectionService()
     settings = Settings(
         model_device="cpu",
         model_local_files_only=True,
         translation_max_concurrency=3,
     )
     application = create_app(
-        translation_service=service,  # type: ignore[arg-type]
+        translation_service=translation_service,  # type: ignore[arg-type]
+        language_detection_service=detection_service,  # type: ignore[arg-type]
         settings=settings,
     )
 
-    assert service.load_calls == 0
+    assert translation_service.load_calls == 0
+    assert detection_service.load_calls == 0
     with TestClient(application) as client:
-        assert service.load_calls == 1
-        assert service.unload_calls == 0
-        assert application.state.translation_service is service
+        assert translation_service.load_calls == 1
+        assert detection_service.load_calls == 1
+        assert detection_service.load_languages == [translation_service.languages]
+        assert application.state.translation_service is translation_service
+        assert application.state.language_detection_service is detection_service
         assert isinstance(application.state.translation_semaphore, asyncio.Semaphore)
         assert application.state.translation_semaphore._value == 3
 
         client.get("/")
         client.get("/health")
         client.get("/languages")
-        assert service.load_calls == 1
+        client.post("/detect-language", json={"text": "Good morning"})
+        assert translation_service.load_calls == 1
+        assert detection_service.load_calls == 1
 
-    assert service.unload_calls == 1
-    assert service.is_loaded is False
+    assert detection_service.unload_calls == 1
+    assert translation_service.unload_calls == 1
+    assert detection_service.is_loaded is False
+    assert translation_service.is_loaded is False
 
 
-def test_startup_failure_is_not_hidden(api_settings: Settings) -> None:
-    service = FakeTranslationService()
-    service.load_failure = True
+def test_model_startup_failure_is_not_hidden(api_settings: Settings) -> None:
+    translation_service = FakeTranslationService()
+    detection_service = FakeLanguageDetectionService()
+    translation_service.load_failure = True
     application = create_app(
-        translation_service=service,  # type: ignore[arg-type]
+        translation_service=translation_service,  # type: ignore[arg-type]
+        language_detection_service=detection_service,  # type: ignore[arg-type]
         settings=api_settings,
     )
 
@@ -57,13 +69,39 @@ def test_startup_failure_is_not_hidden(api_settings: Settings) -> None:
         with TestClient(application):
             pass
 
-    assert service.load_calls == 1
-    assert service.unload_calls == 1
+    assert translation_service.load_calls == 1
+    assert detection_service.load_calls == 0
+    assert detection_service.unload_calls == 1
+    assert translation_service.unload_calls == 1
+
+
+def test_detector_startup_failure_cleans_translation_model(
+    api_settings: Settings,
+) -> None:
+    translation_service = FakeTranslationService()
+    detection_service = FakeLanguageDetectionService()
+    detection_service.load_failure = True
+    application = create_app(
+        translation_service=translation_service,  # type: ignore[arg-type]
+        language_detection_service=detection_service,  # type: ignore[arg-type]
+        settings=api_settings,
+    )
+
+    with pytest.raises(LanguageDetectorLoadError, match="Fake detector startup failure"):
+        with TestClient(application):
+            pass
+
+    assert translation_service.load_calls == 1
+    assert detection_service.load_calls == 1
+    assert detection_service.unload_calls == 1
+    assert translation_service.unload_calls == 1
+    assert translation_service.is_loaded is False
 
 
 def test_root_health_and_documentation_remain_available(
     client: TestClient,
     fake_translation_service: FakeTranslationService,
+    fake_language_detection_service: FakeLanguageDetectionService,
 ) -> None:
     root_response = client.get("/")
     health_response = client.get("/health")
@@ -84,19 +122,30 @@ def test_root_health_and_documentation_remain_available(
         "model_loaded": True,
         "model_name": "fake/m2m100_418M",
         "model_device": "cpu",
+        "language_detector_loaded": True,
+        "language_detector_name": "lingua",
+        "auto_detectable_language_count": 5,
     }
     assert client.get("/docs").status_code == 200
     assert client.get("/redoc").status_code == 200
     assert fake_translation_service.translate_calls == []
+    assert fake_language_detection_service.detect_calls == []
 
 
-def test_health_returns_service_unavailable_when_model_is_not_loaded(
+def test_health_requires_both_loaded_services(
     client: TestClient,
     fake_translation_service: FakeTranslationService,
+    fake_language_detection_service: FakeLanguageDetectionService,
 ) -> None:
-    fake_translation_service.is_loaded = False
+    fake_language_detection_service.is_loaded = False
 
     response = client.get("/health")
 
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "language_detector_not_loaded"
+
+    fake_language_detection_service.is_loaded = True
+    fake_translation_service.is_loaded = False
+    response = client.get("/health")
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "model_not_loaded"
