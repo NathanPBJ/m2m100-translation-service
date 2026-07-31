@@ -81,6 +81,44 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - ReDoc: `http://127.0.0.1:8000/redoc`
 
+## Menjalankan dengan Docker
+
+Deployment Docker menggunakan Linux image CPU-only, satu Uvicorn worker, dan
+tanpa `--reload`. Build dan jalankan service dengan satu command:
+
+```bash
+docker compose up --build -d
+```
+
+Periksa status:
+
+```bash
+docker compose ps
+```
+
+Pantau log:
+
+```bash
+docker compose logs -f translation-service
+```
+
+Stop container tanpa menghapus model cache:
+
+```bash
+docker compose down
+```
+
+Swagger tersedia di `http://127.0.0.1:8000/docs`.
+
+First startup mengunduh model ke named volume. Container recreation berikutnya
+memakai cache yang sama. Jangan menganggap container siap hanya karena statusnya
+`running`; tunggu health status menjadi `healthy`. Perintah
+`docker compose down -v` menghapus named volume dan membuat model perlu
+diunduh kembali.
+
+Panduan configuration override, model cache, smoke test, troubleshooting, dan
+batas keamanan tersedia di [Docker handover](docs/DOCKER_HANDOVER.md).
+
 ## Model dan detector startup
 
 FastAPI memuat tokenizer serta model M2M100 sekali saat startup. Setelah model
@@ -494,7 +532,6 @@ salinan artikel, review, thread, atau tulisan pihak lain.
   seluruh request.
 - Belum ada translation cache atau background processing.
 - Belum ada batch translation.
-- Belum ada Docker.
 - Belum ada authentication atau rate limiting.
 - CPU inference dapat lambat.
 
@@ -511,6 +548,7 @@ Selesai:
 - Token-aware long-text chunking
 - Consistent error handling
 - Unit dan integration tests
+- CPU-only Docker dan Docker Compose deployment
 
 Belum selesai:
 
@@ -519,7 +557,6 @@ Belum selesai:
 - Streaming
 - Translation cache
 - Background worker
-- Docker
 - Authentication
 - Rate limiting
 - Performance benchmark
