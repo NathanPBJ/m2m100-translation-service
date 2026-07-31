@@ -98,6 +98,7 @@ def make_settings(**overrides: Any) -> Settings:
         "model_device": "cpu",
         "model_local_files_only": True,
         "model_max_input_tokens": 512,
+        "long_text_chunk_max_tokens": 400,
         "model_max_new_tokens": 32,
         "model_num_beams": 3,
     }
@@ -322,7 +323,7 @@ def test_input_over_token_limit_is_rejected_without_generation(
     tokenizer = FakeTokenizer(sequence_length=6)
     service, _, model = create_loaded_service(
         monkeypatch,
-        settings=make_settings(model_max_input_tokens=5),
+        settings=make_settings(model_max_input_tokens=5, long_text_chunk_max_tokens=5),
         tokenizer=tokenizer,
     )
 

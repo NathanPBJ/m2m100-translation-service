@@ -20,7 +20,10 @@ from app.core.exceptions import (
     LanguageDetectorNotLoadedError,
     ModelLoadError,
     ModelNotLoadedError,
+    TextChunkingFailedError,
+    TooManyChunksError,
     TranslationInferenceError,
+    TranslationOutputTruncatedError,
     UnsupportedLanguageError,
 )
 from app.schemas.error import ErrorDetail, ErrorResponse
@@ -109,6 +112,47 @@ async def input_too_long_handler(
             "actual_tokens": exc.actual_tokens,
             "maximum_tokens": exc.maximum_tokens,
         },
+    )
+
+
+async def too_many_chunks_handler(
+    _: Request,
+    _exc: TooManyChunksError,
+) -> JSONResponse:
+    return _error_response(
+        413,
+        "too_many_chunks",
+        "The text requires more translation chunks than allowed.",
+    )
+
+
+async def text_chunking_failed_handler(
+    _: Request,
+    exc: TextChunkingFailedError,
+) -> JSONResponse:
+    logger.error(
+        "Text chunking request failed",
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    return _error_response(
+        500,
+        "text_chunking_failed",
+        "The text could not be prepared for translation.",
+    )
+
+
+async def translation_output_truncated_handler(
+    _: Request,
+    exc: TranslationOutputTruncatedError,
+) -> JSONResponse:
+    logger.error(
+        "Translation output reached generation limit",
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    return _error_response(
+        500,
+        "translation_output_truncated",
+        "The translation output reached its generation limit.",
     )
 
 
@@ -236,6 +280,9 @@ def register_error_handlers(app: FastAPI) -> None:
         UnsupportedLanguageError: unsupported_language_handler,
         InputTextTooLargeError: text_too_large_handler,
         InputTooLongError: input_too_long_handler,
+        TooManyChunksError: too_many_chunks_handler,
+        TextChunkingFailedError: text_chunking_failed_handler,
+        TranslationOutputTruncatedError: translation_output_truncated_handler,
         ModelNotLoadedError: model_not_loaded_handler,
         ModelLoadError: model_load_error_handler,
         DeviceConfigurationError: device_configuration_error_handler,

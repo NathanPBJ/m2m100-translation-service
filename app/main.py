@@ -92,7 +92,8 @@ def create_app(
         version=application_settings.app_version,
         description=(
             "Local multilingual translation API powered by facebook/m2m100_418M. "
-            "Source language can be supplied manually or detected locally with Lingua."
+            "Source language can be supplied manually or detected locally with Lingua. "
+            "Token-aware chunking supports long text without silent truncation."
         ),
         docs_url="/docs",
         redoc_url="/redoc",

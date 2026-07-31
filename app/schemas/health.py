@@ -16,3 +16,6 @@ class HealthResponse(BaseModel):
     language_detector_loaded: bool
     language_detector_name: str
     auto_detectable_language_count: int
+    long_text_chunking_enabled: bool
+    long_text_chunk_token_limit: int
+    long_text_max_chunks: int

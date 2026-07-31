@@ -17,3 +17,6 @@ class TranslationResult:
     model_name: str
     device: str
     status: TranslationStatus
+    chunked: bool = False
+    chunk_count: int = 1
+    chunk_token_limit: int = 400

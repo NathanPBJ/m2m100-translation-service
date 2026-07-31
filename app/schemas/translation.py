@@ -64,6 +64,9 @@ class TranslationResponse(BaseModel):
     model_name: str
     device: str
     status: Literal["translated", "unchanged"]
+    chunked: bool
+    chunk_count: int
+    chunk_token_limit: int
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -81,6 +84,9 @@ class TranslationResponse(BaseModel):
                     "model_name": "facebook/m2m100_418M",
                     "device": "cpu",
                     "status": "translated",
+                    "chunked": False,
+                    "chunk_count": 1,
+                    "chunk_token_limit": 400,
                 }
             ]
         },

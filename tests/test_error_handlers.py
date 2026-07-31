@@ -16,7 +16,10 @@ from app.core.exceptions import (
     LanguageDetectorNotLoadedError,
     ModelLoadError,
     ModelNotLoadedError,
+    TextChunkingFailedError,
+    TooManyChunksError,
     TranslationInferenceError,
+    TranslationOutputTruncatedError,
     UnsupportedLanguageError,
 )
 from app.main import create_app
@@ -45,6 +48,21 @@ from tests.conftest import FakeLanguageDetectionService, FakeTranslationService
             InputTooLongError(actual_tokens=700, maximum_tokens=512),
             413,
             "input_too_long",
+        ),
+        (
+            TooManyChunksError(actual_chunks=5, maximum_chunks=2),
+            413,
+            "too_many_chunks",
+        ),
+        (
+            TextChunkingFailedError("raw private chunk TOP_SECRET"),
+            500,
+            "text_chunking_failed",
+        ),
+        (
+            TranslationOutputTruncatedError("raw partial translation TOP_SECRET"),
+            500,
+            "translation_output_truncated",
         ),
         (
             ModelNotLoadedError("Translation model is unavailable."),

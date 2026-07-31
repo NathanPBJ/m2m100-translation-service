@@ -45,6 +45,27 @@ class TranslationInferenceError(TranslationServiceError):
     """Raised when model inference or decoding fails."""
 
 
+class TextChunkingError(TranslationServiceError):
+    """Base exception for long-text chunking errors."""
+
+
+class TextChunkingFailedError(TextChunkingError):
+    """Raised when text cannot be split without losing source content."""
+
+
+class TooManyChunksError(TextChunkingError):
+    """Raised when one request would exceed the configured chunk count."""
+
+    def __init__(self, actual_chunks: int, maximum_chunks: int) -> None:
+        self.actual_chunks = actual_chunks
+        self.maximum_chunks = maximum_chunks
+        super().__init__(f"Text requires {actual_chunks} chunks; the maximum is {maximum_chunks}.")
+
+
+class TranslationOutputTruncatedError(TextChunkingError):
+    """Raised when generated output reaches its limit without an EOS token."""
+
+
 class DeviceConfigurationError(TranslationServiceError):
     """Raised when the requested compute device cannot be used."""
 

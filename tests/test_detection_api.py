@@ -66,7 +66,7 @@ def test_detection_character_limit_returns_413(
     client: TestClient,
     fake_language_detection_service: FakeLanguageDetectionService,
 ) -> None:
-    response = client.post("/detect-language", json={"text": "x" * 101})
+    response = client.post("/detect-language", json={"text": "x" * 10_001})
 
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "text_too_large"

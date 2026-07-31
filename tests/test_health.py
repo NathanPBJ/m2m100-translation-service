@@ -125,6 +125,9 @@ def test_root_health_and_documentation_remain_available(
         "language_detector_loaded": True,
         "language_detector_name": "lingua",
         "auto_detectable_language_count": 5,
+        "long_text_chunking_enabled": True,
+        "long_text_chunk_token_limit": 400,
+        "long_text_max_chunks": 64,
     }
     assert client.get("/docs").status_code == 200
     assert client.get("/redoc").status_code == 200

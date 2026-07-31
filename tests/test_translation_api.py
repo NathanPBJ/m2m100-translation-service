@@ -53,6 +53,9 @@ def test_manual_translation_remains_backward_compatible(
         "model_name": "fake/m2m100_418M",
         "device": "cpu",
         "status": "translated",
+        "chunked": False,
+        "chunk_count": 1,
+        "chunk_token_limit": 400,
     }
     assert fake_translation_service.translate_calls == [
         (
@@ -151,6 +154,9 @@ def test_auto_same_language_returns_unchanged_without_semaphore(
     assert response.json()["status"] == "unchanged"
     assert response.json()["translated_text"] == "Selamat pagi, apa kabar hari ini?"
     assert response.json()["source_language_mode"] == "auto"
+    assert response.json()["chunked"] is False
+    assert response.json()["chunk_count"] == 0
+    assert response.json()["chunk_token_limit"] == 400
     assert fake_language_detection_service.detect_calls == ["Selamat pagi, apa kabar hari ini?"]
     assert fake_translation_service.translate_calls == [
         ("Selamat pagi, apa kabar hari ini?", "id", "id")
@@ -195,6 +201,8 @@ def test_manual_same_language_preserves_original_text(
     assert response.json()["translated_text"] == original_text
     assert response.json()["status"] == "unchanged"
     assert response.json()["source_language_mode"] == "manual"
+    assert response.json()["chunked"] is False
+    assert response.json()["chunk_count"] == 0
     assert fake_translation_service.translate_calls == [(original_text, "id", "id")]
 
 
@@ -311,7 +319,7 @@ def test_character_limit_is_checked_before_detection_and_translation(
 ) -> None:
     response = client.post(
         "/translate",
-        json={"text": "x" * 101, "target_language": "id"},
+        json={"text": "x" * 10_001, "target_language": "id"},
     )
 
     assert response.status_code == 413
@@ -419,7 +427,7 @@ def test_auto_detection_occurs_before_translation_semaphore(
     async def fake_run_in_threadpool(function: object, *arguments: object) -> object:
         if function == fake_language_detection_service.detect:
             events.append("detect")
-        if function == fake_translation_service.translate:
+        if function == fake_translation_service.translate_long_text:
             events.append("translate")
         return function(*arguments)  # type: ignore[operator]
 
@@ -482,3 +490,133 @@ def test_openapi_contains_auto_translation_contract(test_app: FastAPI) -> None:
     assert request_schema["properties"]["source_language"]["default"] == "auto"
     assert "target_language" in request_schema["required"]
     assert "source_language" not in request_schema["required"]
+    response_schema = schema["components"]["schemas"]["TranslationResponse"]
+    assert {"chunked", "chunk_count", "chunk_token_limit"} <= set(response_schema["properties"])
+    assert "split by paragraph and sentence" in translate_operation["description"]
+    assert "too_many_chunks" in translate_operation["responses"]["413"]["description"]
+    assert "text_chunking_failed" in translate_operation["responses"]["500"]["description"]
+    assert "translation_output_truncated" in translate_operation["responses"]["500"]["description"]
+
+
+def test_long_manual_request_uses_long_text_method_once(
+    client: TestClient,
+    fake_translation_service: FakeTranslationService,
+    fake_language_detection_service: FakeLanguageDetectionService,
+) -> None:
+    original_text = (
+        "This is a deliberately longer manual request with several details. "
+        "It should be represented as multiple fake chunks for the API contract."
+    )
+
+    response = client.post(
+        "/translate",
+        json={
+            "text": original_text,
+            "source_language": "en",
+            "target_language": "id",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["chunked"] is True
+    assert response.json()["chunk_count"] > 1
+    assert response.json()["chunk_token_limit"] == 400
+    assert fake_translation_service.translate_long_text_calls == [(original_text, "en", "id")]
+    assert fake_language_detection_service.detect_calls == []
+
+
+def test_long_auto_detects_full_original_once_before_one_translation_call(
+    client: TestClient,
+    fake_translation_service: FakeTranslationService,
+    fake_language_detection_service: FakeLanguageDetectionService,
+) -> None:
+    original_text = (
+        "This long automatic request has two paragraphs and enough content to "
+        "exercise metadata.\n\nThe detector must receive this exact full string only once."
+    )
+
+    response = client.post(
+        "/translate",
+        json={"text": original_text, "target_language": "id"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["source_language"] == "en"
+    assert response.json()["source_language_mode"] == "auto"
+    assert response.json()["chunked"] is True
+    assert response.json()["chunk_count"] > 1
+    assert fake_language_detection_service.detect_calls == [original_text]
+    assert fake_translation_service.translate_long_text_calls == [(original_text, "en", "id")]
+
+
+def test_long_translation_acquires_semaphore_once(
+    monkeypatch: MonkeyPatch,
+    test_app: FastAPI,
+    fake_translation_service: FakeTranslationService,
+) -> None:
+    events: list[str] = []
+
+    class CountingSemaphore:
+        async def __aenter__(self) -> None:
+            events.append("enter")
+
+        async def __aexit__(self, *_: object) -> None:
+            events.append("exit")
+
+    async def direct_threadpool(function: object, *arguments: object) -> object:
+        if function == fake_translation_service.translate_long_text:
+            events.append("translate_long_text")
+        return function(*arguments)  # type: ignore[operator]
+
+    monkeypatch.setattr(
+        "app.api.routes.translation.run_in_threadpool",
+        direct_threadpool,
+    )
+    with TestClient(test_app) as client:
+        test_app.state.translation_semaphore = CountingSemaphore()
+        response = client.post(
+            "/translate",
+            json={
+                "text": "A long manual request " * 10,
+                "source_language": "en",
+                "target_language": "id",
+            },
+        )
+
+    assert response.status_code == 200
+    assert events == ["enter", "translate_long_text", "exit"]
+
+
+@pytest.mark.parametrize(
+    ("error_mode", "status_code", "error_code"),
+    [
+        ("too_many_chunks", 413, "too_many_chunks"),
+        ("chunking", 500, "text_chunking_failed"),
+        ("truncated", 500, "translation_output_truncated"),
+    ],
+)
+def test_long_text_errors_are_safe_and_return_no_partial_output(
+    client: TestClient,
+    fake_translation_service: FakeTranslationService,
+    error_mode: str,
+    status_code: int,
+    error_code: str,
+) -> None:
+    private_text = "PRIVATE_FULL_TEXT " * 10
+    fake_translation_service.error_mode = error_mode
+
+    response = client.post(
+        "/translate",
+        json={
+            "text": private_text,
+            "source_language": "en",
+            "target_language": "id",
+        },
+    )
+
+    assert response.status_code == status_code
+    assert response.json()["error"]["code"] == error_code
+    assert "translated_text" not in response.text
+    assert "PRIVATE_FULL_TEXT" not in response.text
+    assert "PRIVATE_CHUNK" not in response.text
+    assert "PRIVATE_OUTPUT" not in response.text

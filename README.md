@@ -5,7 +5,9 @@ API penerjemahan multibahasa lokal menggunakan FastAPI, PyTorch,
 berjalan pada komputer sendiri tanpa hosted inference, detection API, atau
 translation API berbayar.
 
-Source language dapat diberikan secara manual atau dideteksi otomatis.
+Source language dapat diberikan secara manual atau dideteksi otomatis. Input
+panjang dipecah menjadi chunk yang aman berdasarkan token M2M100, diterjemahkan
+secara berurutan, lalu digabung kembali.
 
 ## Technology stack
 
@@ -146,7 +148,10 @@ Contoh response dari model lokal:
   "target_language": "id",
   "model_name": "facebook/m2m100_418M",
   "device": "cpu",
-  "status": "translated"
+  "status": "translated",
+  "chunked": false,
+  "chunk_count": 1,
+  "chunk_token_limit": 400
 }
 ```
 
@@ -170,6 +175,53 @@ Response manual mempunyai `source_language_mode="manual"`, sedangkan
 `detection_confidence_margin` bernilai `null`.
 
 Target language selalu wajib dan tidak boleh menggunakan `auto`.
+
+## Long-text translation
+
+Endpoint `/translate` menerima satu string hingga character limit API. Teks
+pendek diterjemahkan sebagai satu chunk. Teks panjang dipisahkan berdasarkan
+paragraf dan kalimat, lalu fallback token-aware mencari source span terbesar
+yang masih muat. Bahasa tanpa spasi seperti Mandarin dan Jepang tetap dapat
+dipecah pada batas karakter Unicode tanpa memotong byte UTF-8.
+
+Default chunk limit adalah 400 token, termasuk special token tokenizer.
+Hard input limit untuk setiap operasi model tetap 512 token. Tokenizer selalu
+dipanggil dengan `truncation=False`; service tidak melakukan silent truncation.
+Urutan source span divalidasi dengan merekonstruksi seluruh input secara identik
+sebelum inference.
+
+Separator paragraf, CRLF, blank line, serta leading atau trailing whitespace
+yang dikeluarkan dari chunk disimpan dan dipasang kembali secara deterministik.
+Setiap chunk diterjemahkan secara berurutan. Automatic language detection hanya
+dijalankan satu kali terhadap seluruh original text, bukan per chunk.
+
+Jika source dan target sama, original text dikembalikan tanpa tokenisasi,
+chunking, atau model inference.
+
+### Chunking process
+
+```text
+Full text
+→ language detection once
+→ paragraph splitting
+→ sentence splitting
+→ token-aware fallback
+→ sequential translation
+→ ordered merge
+```
+
+Response translation menambahkan metadata:
+
+```json
+{
+  "chunked": true,
+  "chunk_count": 5,
+  "chunk_token_limit": 400
+}
+```
+
+`chunked` bernilai `true` hanya jika lebih dari satu chunk diterjemahkan.
+Same-language response mempunyai `chunk_count=0`.
 
 ## Detect-language endpoint
 
@@ -262,7 +314,10 @@ manual.
   "model_device": "cpu",
   "language_detector_loaded": true,
   "language_detector_name": "lingua",
-  "auto_detectable_language_count": 66
+  "auto_detectable_language_count": 66,
+  "long_text_chunking_enabled": true,
+  "long_text_chunk_token_limit": 400,
+  "long_text_max_chunks": 64
 }
 ```
 
@@ -285,9 +340,9 @@ Mapping utama:
 
 | Status | Error code |
 |---|---|
-| 413 | `text_too_large`, `input_too_long` |
+| 413 | `text_too_large`, `input_too_long`, `too_many_chunks` |
 | 422 | `request_validation_error`, `invalid_detection_input`, `language_detection_uncertain`, `unsupported_language` |
-| 500 | `language_detection_failed`, `translation_failed`, `internal_server_error` |
+| 500 | `text_chunking_failed`, `translation_output_truncated`, `language_detection_failed`, `translation_failed`, `internal_server_error` |
 | 503 | `language_detector_not_loaded`, `language_detector_load_failed`, `model_not_loaded`, `model_load_failed`, `device_configuration_error` |
 
 Response internal error tidak menyertakan traceback, path lokal, original text,
@@ -298,9 +353,16 @@ cleaned text, atau pesan mentah dari Lingua/PyTorch.
 Language detection dan M2M100 inference yang synchronous dijalankan melalui
 threadpool. Detection berjalan sebelum translation semaphore.
 
-`TRANSLATION_MAX_CONCURRENCY` membatasi M2M100 inference bersamaan dalam satu
-process FastAPI. Default-nya satu untuk CPU. Ini bukan rate limiter global.
-Setiap process Uvicorn akan memuat satu copy model sendiri.
+`TRANSLATION_MAX_CONCURRENCY` membatasi request M2M100 bersamaan dalam satu
+process FastAPI. Semaphore diperoleh sekali untuk seluruh proses long-text
+translation, bukan per chunk. Detection berjalan sebelum semaphore.
+
+Di dalam translation service, satu `threading.RLock` melindungi mutable
+`tokenizer.src_lang`, tokenisasi, seluruh urutan generation, decode, model load,
+dan model unload. Lock mencegah chunk request lain menyela source-language state.
+Semaphore mengatur concurrency pada level API, sedangkan lock menjaga state
+internal engine. Ini bukan rate limiter global. Setiap process Uvicorn akan
+memuat satu copy model sendiri.
 
 ## Configuration
 
@@ -317,17 +379,22 @@ Setiap process Uvicorn akan memuat satu copy model sendiri.
 | `MODEL_DEVICE` | `auto` | `auto`, `cpu`, atau `cuda` |
 | `MODEL_LOCAL_FILES_ONLY` | `false` | Gunakan cache lokal saja |
 | `MODEL_MAX_INPUT_TOKENS` | `512` | Batas token engine |
-| `MODEL_MAX_NEW_TOKENS` | `256` | Batas generation |
+| `MODEL_MAX_NEW_TOKENS` | `512` | Batas generation per chunk |
 | `MODEL_NUM_BEAMS` | `4` | Jumlah beam |
 | `API_MAX_TEXT_CHARACTERS` | `10000` | Batas karakter sebelum detection/tokenisasi |
 | `TRANSLATION_MAX_CONCURRENCY` | `1` | Inference bersamaan per process |
+| `LONG_TEXT_CHUNKING_ENABLED` | `true` | Aktifkan pemecahan input panjang |
+| `LONG_TEXT_CHUNK_MAX_TOKENS` | `400` | Token maksimum per chunk |
+| `LONG_TEXT_MAX_CHUNKS` | `64` | Chunk maksimum per request |
 | `LANGUAGE_DETECTION_MIN_CONFIDENCE` | `0.30` | Confidence minimum kandidat teratas |
 | `LANGUAGE_DETECTION_MIN_RELATIVE_DISTANCE` | `0.05` | Margin minimum kandidat pertama dan kedua |
 | `LANGUAGE_DETECTION_MIN_ALPHABETIC_CHARACTERS` | `3` | Minimum karakter alfabet setelah cleaning |
 | `LANGUAGE_DETECTION_MAX_CANDIDATES` | `3` | Candidate maksimum dalam response |
 
-Character limit melindungi API sebelum detection. Token limit melindungi model
-setelah tokenisasi. Input tidak dipotong secara diam-diam.
+`LONG_TEXT_CHUNK_MAX_TOKENS` tidak boleh melebihi
+`MODEL_MAX_INPUT_TOKENS`. Jika chunking dimatikan, input di atas hard token limit
+tetap menghasilkan `input_too_long`. Character limit melindungi API sebelum
+detection. Maximum chunk count membatasi pekerjaan satu request.
 
 ## Smoke test
 
@@ -356,6 +423,27 @@ python scripts/smoke_test_model.py \
   --target id
 ```
 
+Smoke test long text dengan PowerShell:
+
+```powershell
+python scripts/smoke_test_long_text.py `
+  --file tests/fixtures/long_text/general_opinion_en.txt `
+  --source auto `
+  --target id
+```
+
+Bash:
+
+```bash
+python scripts/smoke_test_long_text.py \
+  --file tests/fixtures/long_text/general_opinion_en.txt \
+  --source auto \
+  --target id
+```
+
+Secara default script hanya menampilkan preview awal dan akhir. Tambahkan
+`--show-output` untuk melihat seluruh hasil tanpa menyimpannya ke repository.
+
 ## Testing
 
 Unit dan integration test menggunakan fake tokenizer, model, dan detector.
@@ -373,6 +461,17 @@ Bobot M2M100 bukan bagian repository. Folder `models/`, `cache/`,
 `huggingface_cache/`, `.venv`, cache tooling, log, dan `.env` diabaikan Git.
 Binary wheel Lingua juga tidak disimpan dalam repository.
 
+## Test fixtures
+
+Repository mempunyai tiga fixture English original:
+
+- Postingan opini umum tentang algorithmic social media feed.
+- Review tiga minggu untuk wireless headphones fiktif Aurora X1.
+- Kronologi/spill project kelompok fiktif.
+
+Chronology sepenuhnya fiktif dan hanya digunakan untuk test. Fixture bukan
+salinan artikel, review, thread, atau tulisan pihak lain.
+
 ## Current limitations
 
 - Teks sangat pendek dapat ambigu.
@@ -384,6 +483,16 @@ Binary wheel Lingua juga tidak disimpan dalam repository.
 - Auto detection hanya mencakup intersection Lingua dan M2M100.
 - Bahasa di luar intersection harus menggunakan source manual.
 - Detection confidence bukan translation confidence.
+- Setiap chunk diterjemahkan terpisah sehingga konteks lintas chunk berkurang.
+- Pronoun, istilah, atau gaya dapat sedikit berbeda antar-chunk.
+- Chunking mempertahankan urutan dan separator paragraf, tetapi model dapat
+  mengubah spacing internal chunk.
+- Mixed-language text tetap memakai satu dominant source language.
+- CPU inference untuk input sangat panjang dapat berjalan lambat.
+- Request dibatasi character limit dan maximum chunk count.
+- Tidak ada streaming atau partial response; kegagalan satu chunk menggagalkan
+  seluruh request.
+- Belum ada translation cache atau background processing.
 - Belum ada batch translation.
 - Belum ada Docker.
 - Belum ada authentication atau rate limiting.
@@ -399,6 +508,7 @@ Selesai:
 - Automatic language detection
 - Endpoint `/detect-language`
 - Auto `/translate`
+- Token-aware long-text chunking
 - Consistent error handling
 - Unit dan integration tests
 
@@ -406,6 +516,9 @@ Belum selesai:
 
 - Mixed-language segmentation
 - Batch translation
+- Streaming
+- Translation cache
+- Background worker
 - Docker
 - Authentication
 - Rate limiting

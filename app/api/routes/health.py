@@ -45,4 +45,7 @@ async def health_check(
         language_detector_loaded=detection_service.is_loaded,
         language_detector_name=detection_service.detector_name,
         auto_detectable_language_count=len(detection_service.get_supported_languages()),
+        long_text_chunking_enabled=settings.long_text_chunking_enabled,
+        long_text_chunk_token_limit=settings.long_text_chunk_max_tokens,
+        long_text_max_chunks=settings.long_text_max_chunks,
     )

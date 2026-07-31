@@ -17,7 +17,10 @@ from app.core.exceptions import (
     LanguageDetectorNotLoadedError,
     ModelLoadError,
     ModelNotLoadedError,
+    TextChunkingFailedError,
+    TooManyChunksError,
     TranslationInferenceError,
+    TranslationOutputTruncatedError,
     UnsupportedLanguageError,
 )
 from app.domain.language_detection import LanguageCandidate, LanguageDetectionResult
@@ -35,6 +38,7 @@ class FakeTranslationService:
         self.load_calls = 0
         self.unload_calls = 0
         self.translate_calls: list[tuple[str, str, str]] = []
+        self.translate_long_text_calls: list[tuple[str, str, str]] = []
         self.supported_language_calls = 0
         self.load_failure = False
         self.error_mode: str | None = None
@@ -65,6 +69,12 @@ class FakeTranslationService:
             raise InputTooLongError(actual_tokens=700, maximum_tokens=512)
         if self.error_mode == "inference":
             raise TranslationInferenceError("raw PyTorch failure with TOP_SECRET")
+        if self.error_mode == "too_many_chunks":
+            raise TooManyChunksError(actual_chunks=5, maximum_chunks=2)
+        if self.error_mode == "chunking":
+            raise TextChunkingFailedError("raw source chunk PRIVATE_CHUNK")
+        if self.error_mode == "truncated":
+            raise TranslationOutputTruncatedError("raw translated chunk PRIVATE_OUTPUT")
         if self.error_mode == "unexpected":
             raise RuntimeError("raw internal model object TOP_SECRET")
         if source_language == "auto":
@@ -100,6 +110,34 @@ class FakeTranslationService:
             model_name=self.model_name,
             device=self.device,
             status=status,
+            chunked=False,
+            chunk_count=0 if status == "unchanged" else 1,
+            chunk_token_limit=400,
+        )
+
+    def translate_long_text(
+        self,
+        text: str,
+        source_language: str,
+        target_language: str,
+    ) -> TranslationResult:
+        """Simulate one long-text service call while preserving old call tracking."""
+        self.translate_long_text_calls.append((text, source_language, target_language))
+        result = self.translate(text, source_language, target_language)
+        if result.status == "unchanged":
+            return result
+        chunk_count = max(1, (len(text) + 59) // 60)
+        return TranslationResult(
+            original_text=result.original_text,
+            translated_text=result.translated_text,
+            source_language=result.source_language,
+            target_language=result.target_language,
+            model_name=result.model_name,
+            device=result.device,
+            status=result.status,
+            chunked=chunk_count > 1,
+            chunk_count=chunk_count,
+            chunk_token_limit=400,
         )
 
     def get_supported_languages(self) -> tuple[str, ...]:
@@ -196,7 +234,7 @@ def api_settings() -> Settings:
     return Settings(
         model_device="cpu",
         model_local_files_only=True,
-        api_max_text_characters=100,
+        api_max_text_characters=10_000,
         translation_max_concurrency=2,
     )
 

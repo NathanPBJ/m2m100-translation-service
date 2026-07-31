@@ -30,9 +30,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["translation"])
 
 ERROR_RESPONSES = {
-    413: {"model": ErrorResponse, "description": "Character or token limit exceeded."},
+    413: {
+        "model": ErrorResponse,
+        "description": (
+            "Character, token, or maximum chunk limit exceeded "
+            "(`text_too_large`, `input_too_long`, or `too_many_chunks`)."
+        ),
+    },
     422: {"model": ErrorResponse, "description": "Invalid input or unsupported language."},
-    500: {"model": ErrorResponse, "description": "Translation inference failed."},
+    500: {
+        "model": ErrorResponse,
+        "description": (
+            "Translation preparation or inference failed "
+            "(`text_chunking_failed`, `translation_output_truncated`, "
+            "or `translation_failed`)."
+        ),
+    },
     503: {"model": ErrorResponse, "description": "Translation model is unavailable."},
 }
 
@@ -45,7 +58,10 @@ ERROR_RESPONSES = {
     description=(
         "Translate text using the local M2M100 model. Source language defaults to "
         "`auto`, or a manual code can be supplied. Detection may reject short or "
-        "ambiguous text. Use `/languages` for valid codes."
+        "ambiguous text. Long input is split by paragraph and sentence using the "
+        "loaded tokenizer, then translated sequentially without silent truncation. "
+        "Source detection runs once for the full text, paragraph separators are "
+        "preserved, and the number of chunks is bounded. Use `/languages` for valid codes."
     ),
 )
 async def translate_text(
@@ -107,7 +123,7 @@ async def translate_text(
     started_at = perf_counter()
     if resolved_source_language == request_data.target_language:
         result = await run_in_threadpool(
-            service.translate,
+            service.translate_long_text,
             request_data.text,
             resolved_source_language,
             request_data.target_language,
@@ -115,7 +131,7 @@ async def translate_text(
     else:
         async with semaphore:
             result = await run_in_threadpool(
-                service.translate,
+                service.translate_long_text,
                 request_data.text,
                 resolved_source_language,
                 request_data.target_language,
@@ -143,6 +159,9 @@ async def translate_text(
         model_name=result.model_name,
         device=result.device,
         status=result.status,
+        chunked=result.chunked,
+        chunk_count=result.chunk_count,
+        chunk_token_limit=result.chunk_token_limit,
     )
 
 
