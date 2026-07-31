@@ -107,6 +107,17 @@ class M2M100TranslationService:
             perf_counter() - started_at,
         )
 
+    def unload_model(self) -> None:
+        """Release in-memory model resources without deleting the disk cache."""
+        logger.info("Unloading model %s from %s", self.model_name, self.device)
+        was_loaded = self.is_loaded
+        self._model = None
+        self._tokenizer = None
+        self._supported_languages = ()
+        if was_loaded and self.device == "cuda":
+            torch.cuda.empty_cache()
+        logger.info("Model %s unloaded successfully", self.model_name)
+
     def get_supported_languages(self) -> tuple[str, ...]:
         """Return sorted language codes exposed by the loaded tokenizer."""
         self._ensure_loaded()
@@ -152,9 +163,8 @@ class M2M100TranslationService:
             sequence_length = self._get_sequence_length(encoded_inputs)
             if sequence_length > self._settings.model_max_input_tokens:
                 raise InputTooLongError(
-                    "Input contains "
-                    f"{sequence_length} tokens; the maximum is "
-                    f"{self._settings.model_max_input_tokens}."
+                    actual_tokens=sequence_length,
+                    maximum_tokens=self._settings.model_max_input_tokens,
                 )
 
             model_inputs = {name: tensor.to(self.device) for name, tensor in encoded_inputs.items()}

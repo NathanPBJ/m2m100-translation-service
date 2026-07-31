@@ -214,6 +214,25 @@ def test_load_failure_is_wrapped(monkeypatch: MonkeyPatch) -> None:
     assert service.is_loaded is False
 
 
+def test_unload_model_is_idempotent_and_translate_requires_reload(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    service, _, _ = create_loaded_service(monkeypatch)
+    empty_cache_calls: list[bool] = []
+    monkeypatch.setattr(
+        "app.services.translation.torch.cuda.empty_cache",
+        lambda: empty_cache_calls.append(True),
+    )
+
+    service.unload_model()
+    service.unload_model()
+
+    assert service.is_loaded is False
+    assert empty_cache_calls == []
+    with pytest.raises(ModelNotLoadedError):
+        service.translate("Good morning", "en", "id")
+
+
 def test_supported_languages_are_sorted_and_immutable(monkeypatch: MonkeyPatch) -> None:
     service, _, _ = create_loaded_service(monkeypatch)
 

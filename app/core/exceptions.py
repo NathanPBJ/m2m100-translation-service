@@ -24,6 +24,22 @@ class InvalidTranslationInputError(TranslationServiceError):
 class InputTooLongError(TranslationServiceError):
     """Raised when tokenized input exceeds the configured limit."""
 
+    def __init__(self, actual_tokens: int, maximum_tokens: int) -> None:
+        self.actual_tokens = actual_tokens
+        self.maximum_tokens = maximum_tokens
+        super().__init__(f"Input contains {actual_tokens} tokens; the maximum is {maximum_tokens}.")
+
+
+class InputTextTooLargeError(TranslationServiceError):
+    """Raised when API input exceeds the configured character limit."""
+
+    def __init__(self, actual_characters: int, maximum_characters: int) -> None:
+        self.actual_characters = actual_characters
+        self.maximum_characters = maximum_characters
+        super().__init__(
+            f"Input contains {actual_characters} characters; the maximum is {maximum_characters}."
+        )
+
 
 class TranslationInferenceError(TranslationServiceError):
     """Raised when model inference or decoding fails."""

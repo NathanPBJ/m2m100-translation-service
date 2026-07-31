@@ -10,3 +10,6 @@ class HealthResponse(BaseModel):
     service: str
     version: str
     environment: str
+    model_loaded: bool
+    model_name: str
+    model_device: str

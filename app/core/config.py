@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     model_max_input_tokens: PositiveInt = 512
     model_max_new_tokens: PositiveInt = 256
     model_num_beams: PositiveInt = 4
+    api_max_text_characters: PositiveInt = 10_000
+    translation_max_concurrency: PositiveInt = 1
 
     model_config = SettingsConfigDict(
         env_file=".env",
