@@ -562,6 +562,28 @@ Belum selesai:
 - Performance benchmark
 - Production deployment configuration
 
+## Current release
+
+`v0.1.0` — Initial internal release.
+
+Release ini adalah baseline internal untuk integrasi dan handover. Service belum
+fully production-hardened; baca security warning dan limitation sebelum
+deployment.
+
+## Handover documentation
+
+- [Senior handover](docs/SENIOR_HANDOVER.md) — ringkasan pertama untuk penerima.
+- [Architecture](docs/ARCHITECTURE.md) — component, lifecycle, flow, concurrency,
+  storage, dan failure boundary.
+- [API reference](docs/API_REFERENCE.md) — endpoint, schema, examples, dan error.
+- [Operations runbook](docs/OPERATIONS_RUNBOOK.md) — startup, routine operations,
+  configuration, model cache, dan troubleshooting.
+- [Docker handover](docs/DOCKER_HANDOVER.md) — detail image dan Compose deployment.
+- [v0.1.0 release notes](docs/RELEASE_NOTES_v0.1.0.md) — release scope dan known
+  limitations.
+- [Third-party notices](THIRD_PARTY_NOTICES.md) — dependency/model license summary.
+- [Changelog](CHANGELOG.md) — perubahan per release.
+
 ## Lisensi
 
 Source code repository menggunakan MIT License. Bobot
